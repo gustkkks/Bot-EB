@@ -25,9 +25,7 @@ const client = new Client({
   ]
 });
 
-const PREFIX = '.';
 const CARGO_CDP = '1489819596314771616';
-
 const cdps = new Map();
 const sessoesEmbed = new Map();
 
@@ -129,7 +127,44 @@ client.once(Events.ClientReady, async function(c) {
   const cmds = [
     new SlashCommandBuilder()
       .setName('embed')
-      .setDescription('Cria uma embed personalizada')
+      .setDescription('Cria uma embed personalizada'),
+    new SlashCommandBuilder()
+      .setName('cdp')
+      .setDescription('Gerencia o CDP de membros')
+      .addSubcommand(function(s) {
+        return s.setName('aplicar')
+          .setDescription('Aplica CDP a um membro')
+          .addUserOption(function(o) {
+            return o.setName('usuario').setDescription('Membro').setRequired(true);
+          })
+          .addNumberOption(function(o) {
+            return o.setName('dias').setDescription('Quantidade de dias').setRequired(true);
+          });
+      })
+      .addSubcommand(function(s) {
+        return s.setName('editar')
+          .setDescription('Edita os dias de CDP de um membro')
+          .addUserOption(function(o) {
+            return o.setName('usuario').setDescription('Membro').setRequired(true);
+          })
+          .addNumberOption(function(o) {
+            return o.setName('dias').setDescription('Nova quantidade de dias').setRequired(true);
+          });
+      })
+      .addSubcommand(function(s) {
+        return s.setName('remover')
+          .setDescription('Remove o CDP de um membro')
+          .addUserOption(function(o) {
+            return o.setName('usuario').setDescription('Membro').setRequired(true);
+          });
+      })
+      .addSubcommand(function(s) {
+        return s.setName('ver')
+          .setDescription('Ve o tempo restante de CDP de um membro')
+          .addUserOption(function(o) {
+            return o.setName('usuario').setDescription('Membro').setRequired(true);
+          });
+      })
   ].map(function(x) { return x.toJSON(); });
   try {
     await new REST({ version: '10' })
@@ -139,109 +174,77 @@ client.once(Events.ClientReady, async function(c) {
   } catch (e) { console.error(e); }
 });
 
-// MENSAGENS - comandos .cdp
-client.on(Events.MessageCreate, async function(msg) {
-  if (msg.author.bot) return;
-  if (!msg.guild) return;
-  if (!msg.content.startsWith(PREFIX)) return;
-
-  const args = msg.content.slice(PREFIX.length).trim().split(/ +/);
-  const cmd = args.shift().toLowerCase();
-
-  if (cmd !== 'cdp') return;
-  if (!temPerm(msg.member)) {
-    return msg.reply({ embeds: [
-      new EmbedBuilder().setColor('#ff4444').setDescription('❌ Sem permissão!')
-    ]});
-  }
-
-  const sub = args[0] ? args[0].toLowerCase() : null;
-
-  // .cdp @user <dias>
-  if (!sub || msg.mentions.members.first()) {
-    const alvo = msg.mentions.members.first();
-    const dias = parseFloat(args[1] || args[0]);
-    if (!alvo || isNaN(dias) || dias <= 0) {
-      return msg.reply('Use: `.cdp @user <dias>` — ex: `.cdp @user 10`');
-    }
-    await aplicarCDP(msg.guild, alvo.id, dias);
-    const expira = Date.now() + diasParaMs(dias);
-    const e = new EmbedBuilder()
-      .setColor('#ff4444')
-      .setTitle('🔒 CDP Aplicado')
-      .addFields(
-        { name: 'Usuário', value: alvo.toString(), inline: true },
-        { name: 'Duração', value: dias + ' dia(s)', inline: true },
-        { name: 'Expira em', value: formatarTempo(diasParaMs(dias)), inline: true },
-        { name: 'Moderador', value: msg.author.toString(), inline: true }
-      ).setTimestamp();
-    return msg.reply({ embeds: [e] });
-  }
-
-  // .cdp editar @user <dias>
-  if (sub === 'editar') {
-    const alvo = msg.mentions.members.first();
-    const dias = parseFloat(args[2]);
-    if (!alvo || isNaN(dias) || dias <= 0) {
-      return msg.reply('Use: `.cdp editar @user <dias>`');
-    }
-    await aplicarCDP(msg.guild, alvo.id, dias);
-    const e = new EmbedBuilder()
-      .setColor('#f1c40f')
-      .setTitle('✏️ CDP Editado')
-      .addFields(
-        { name: 'Usuário', value: alvo.toString(), inline: true },
-        { name: 'Nova duração', value: dias + ' dia(s)', inline: true },
-        { name: 'Expira em', value: formatarTempo(diasParaMs(dias)), inline: true }
-      ).setTimestamp();
-    return msg.reply({ embeds: [e] });
-  }
-
-  // .cdp remover @user
-  if (sub === 'remover') {
-    const alvo = msg.mentions.members.first();
-    if (!alvo) return msg.reply('Use: `.cdp remover @user`');
-    await removerCDP(msg.guild, alvo.id, false);
-    const e = new EmbedBuilder()
-      .setColor('#2ecc71')
-      .setTitle('✅ CDP Removido')
-      .addFields(
-        { name: 'Usuário', value: alvo.toString(), inline: true },
-        { name: 'Moderador', value: msg.author.toString(), inline: true }
-      ).setTimestamp();
-    return msg.reply({ embeds: [e] });
-  }
-
-  // .cdp ver @user
-  if (sub === 'ver') {
-    const alvo = msg.mentions.members.first();
-    if (!alvo) return msg.reply('Use: `.cdp ver @user`');
-    const chave = msg.guild.id + '_' + alvo.id;
-    const dados = cdps.get(chave);
-    if (!dados) return msg.reply(alvo.toString() + ' não tem CDP ativo.');
-    const restante = dados.expira - Date.now();
-    const e = new EmbedBuilder()
-      .setColor('#e67e22')
-      .setTitle('📋 CDP Ativo')
-      .addFields(
-        { name: 'Usuário', value: alvo.toString(), inline: true },
-        { name: 'Tempo restante', value: formatarTempo(restante), inline: true }
-      ).setTimestamp();
-    return msg.reply({ embeds: [e] });
-  }
-
-  return msg.reply(
-    'Comandos disponíveis:\n' +
-    '`.cdp @user <dias>` — aplicar\n' +
-    '`.cdp editar @user <dias>` — editar\n' +
-    '`.cdp remover @user` — remover\n' +
-    '`.cdp ver @user` — ver tempo restante'
-  );
-});
-
-// INTERAÇÕES - /embed
 client.on(Events.InteractionCreate, async function(i) {
 
+  // /cdp
+  if (i.isChatInputCommand() && i.commandName === 'cdp') {
+    if (!temPerm(i.member)) {
+      return i.reply({ content: '❌ Sem permissão!', ephemeral: true });
+    }
+    const sub = i.options.getSubcommand();
+    const alvo = i.options.getMember('usuario');
+
+    if (sub === 'aplicar') {
+      const dias = i.options.getNumber('dias');
+      if (dias <= 0) return i.reply({ content: 'Dias inválido!', ephemeral: true });
+      await i.deferReply({ ephemeral: true });
+      await aplicarCDP(i.guild, alvo.id, dias);
+      const e = new EmbedBuilder()
+        .setColor('#ff4444').setTitle('🔒 CDP Aplicado')
+        .addFields(
+          { name: 'Usuário', value: alvo.toString(), inline: true },
+          { name: 'Duração', value: dias + ' dia(s)', inline: true },
+          { name: 'Expira em', value: formatarTempo(diasParaMs(dias)), inline: true },
+          { name: 'Moderador', value: i.user.toString(), inline: true }
+        ).setTimestamp();
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (sub === 'editar') {
+      const dias = i.options.getNumber('dias');
+      if (dias <= 0) return i.reply({ content: 'Dias inválido!', ephemeral: true });
+      await i.deferReply({ ephemeral: true });
+      await aplicarCDP(i.guild, alvo.id, dias);
+      const e = new EmbedBuilder()
+        .setColor('#f1c40f').setTitle('✏️ CDP Editado')
+        .addFields(
+          { name: 'Usuário', value: alvo.toString(), inline: true },
+          { name: 'Nova duração', value: dias + ' dia(s)', inline: true },
+          { name: 'Expira em', value: formatarTempo(diasParaMs(dias)), inline: true }
+        ).setTimestamp();
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (sub === 'remover') {
+      await i.deferReply({ ephemeral: true });
+      await removerCDP(i.guild, alvo.id, false);
+      const e = new EmbedBuilder()
+        .setColor('#2ecc71').setTitle('✅ CDP Removido')
+        .addFields(
+          { name: 'Usuário', value: alvo.toString(), inline: true },
+          { name: 'Moderador', value: i.user.toString(), inline: true }
+        ).setTimestamp();
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (sub === 'ver') {
+      const chave = i.guild.id + '_' + alvo.id;
+      const dados = cdps.get(chave);
+      if (!dados) {
+        return i.reply({ content: alvo.toString() + ' não tem CDP ativo.', ephemeral: true });
+      }
+      const restante = dados.expira - Date.now();
+      const e = new EmbedBuilder()
+        .setColor('#e67e22').setTitle('📋 CDP Ativo')
+        .addFields(
+          { name: 'Usuário', value: alvo.toString(), inline: true },
+          { name: 'Tempo restante', value: formatarTempo(restante), inline: true }
+        ).setTimestamp();
+      return i.reply({ embeds: [e], ephemeral: true });
+    }
+  }
+
+  // /embed
   if (i.isChatInputCommand() && i.commandName === 'embed') {
     if (!temPerm(i.member)) {
       return i.reply({ content: '❌ Sem permissão!', ephemeral: true });
@@ -281,6 +284,90 @@ client.on(Events.InteractionCreate, async function(i) {
       const br = botoesEmbed(s);
       const comps = [menuEmbed()];
       if (br) comps.push(br);
+      return i.update({ content: 'Botão removido.', embeds: [montarEmbed(s)], components: comps });
+    }
+
+    if (v === 'enviar') {
+      const br = botoesEmbed(s);
+      try {
+        await i.channel.send({ embeds: [montarEmbed(s)], components: br ? [br] : [] });
+        sessoesEmbed.delete(i.user.id);
+        return i.update({ content: 'Embed enviada!', embeds: [], components: [] });
+      } catch (e) { return i.reply({ content: 'Erro ao enviar.', ephemeral: true }); }
+    }
+
+    if (v === 'botao') {
+      if (s.botoes.length >= 5) {
+        return i.reply({ content: 'Limite de 5 botões!', ephemeral: true });
+      }
+      const modal = new ModalBuilder().setCustomId('em_botao').setTitle('Adicionar Botão')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('lbl').setLabel('Texto do botão')
+              .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('url').setLabel('URL')
+              .setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('https://...')
+          )
+        );
+      return i.showModal(modal);
+    }
+
+    const lbls = {
+      titulo: 'Titulo', descricao: 'Descricao', cor: 'Cor (#hex)',
+      imagem: 'Imagem URL', thumbnail: 'Thumbnail URL', rodape: 'Rodape', autor: 'Autor'
+    };
+    const inp = new TextInputBuilder()
+      .setCustomId('val').setLabel(lbls[v] || v)
+      .setStyle(v === 'descricao' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+      .setRequired(false).setValue(s[v] || '');
+    const modal = new ModalBuilder()
+      .setCustomId('em_campo_' + v).setTitle(lbls[v] || v)
+      .addComponents(new ActionRowBuilder().addComponents(inp));
+    return i.showModal(modal);
+  }
+
+  // Modals embed
+  if (i.isModalSubmit()) {
+    if (i.customId.startsWith('em_campo_')) {
+      const campo = i.customId.replace('em_campo_', '');
+      const s = sessoesEmbed.get(i.user.id);
+      if (!s) return i.reply({ content: 'Sessão expirada.', ephemeral: true });
+      s[campo] = i.fields.getTextInputValue('val') || null;
+      sessoesEmbed.set(i.user.id, s);
+      let prev;
+      try { prev = montarEmbed(s); } catch (_) {
+        return i.reply({ content: 'Valor inválido.', ephemeral: true });
+      }
+      const br = botoesEmbed(s);
+      const comps = [menuEmbed()];
+      if (br) comps.push(br);
+      return i.update({ content: campo + ' atualizado!', embeds: [prev], components: comps });
+    }
+
+    if (i.customId === 'em_botao') {
+      const s = sessoesEmbed.get(i.user.id);
+      if (!s) return i.reply({ content: 'Sessão expirada.', ephemeral: true });
+      const url = i.fields.getTextInputValue('url');
+      if (!url.startsWith('http')) {
+        return i.reply({ content: 'URL inválida.', ephemeral: true });
+      }
+      s.botoes.push({ label: i.fields.getTextInputValue('lbl'), url });
+      sessoesEmbed.set(i.user.id, s);
+      const br = botoesEmbed(s);
+      const comps = [menuEmbed()];
+      if (br) comps.push(br);
+      return i.update({
+        content: 'Botão adicionado! (' + s.botoes.length + '/5)',
+        embeds: [montarEmbed(s)],
+        components: comps
+      });
+    }
+  }
+});
+
+client.login(process.env.TOKEN);
       return i.update({ content: 'Botão removido.', embeds: [montarEmbed(s)], components: comps });
     }
 
